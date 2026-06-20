@@ -1,56 +1,287 @@
 generator client {
-    provider = "prisma-client-js"
+  provider = "prisma-client-js"
 }
 
 datasource db {
-    provider = "postgresql"
-  
+  provider = "postgresql"
 }
 
 enum BlockStatus {
-    PENDING
-      IN_PROGRESS
-        DONE
-          SKIPPED
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
+  CANCELLED
+}
+
+enum RotationCycle {
+  WEEKLY
+  BIWEEKLY
+  CUSTOM
+}
+
+enum MockOutcome {
+  NOT_ANALYZED
+  PASSED
+  FAILED
+  PENDING
+}
+
+enum MasteryTrend {
+  IMPROVING
+  STABLE
+  DECLINING
+  UNKNOWN
+}
+
+enum AnswerVaultStatus {
+  NEW
+  REVIEW
+  MASTERED
+  ARCHIVED
+}
+
+enum FatigueLevel {
+  LOW
+  MODERATE
+  HIGH
+  CRITICAL
+}
+
+enum LogSeverity {
+  DEBUG
+  INFO
+  WARNING
+  ERROR
+  CRITICAL
+}
+
+enum SyllabusNodeType {
+  SUBJECT
+  PAPER
+  TOPIC
+  SUBTOPIC
+  CONCEPT
+  QUESTION_BANK
 }
 
 model User {
-    id        String   @id @default(cuid())
-      email     String   @unique
-        name      String?
-          createdAt DateTime @default(now())
+  id                  String   @id @default(cuid())
+  email               String   @unique
+  name                String?
+  preferredTimeZone   String?
+  onboardingCompleted Boolean  @default(false)
+  createdAt           DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime @updatedAt @db.Timestamptz(6)
 
-            studyBlocks StudyBlock[]
-              mockTests   MockTest[]
+  syllabusNodes           SyllabusNode[]
+  studyBlocks             StudyBlock[]
+  weeklyRotationRules     WeeklyRotationRule[]
+  mockTests               MockTest[]
+  errorLogs               ErrorLog[]
+  weakAreaInjectionQueues WeakAreaInjectionQueue[]
+  answerVaultEntries      AnswerVaultEntry[]
+  fatigueMetrics          FatigueMetric[]
+  masteryHistories        MasteryHistory[]
+}
+
+model SyllabusNode {
+  id             String           @id @default(cuid())
+  parentId       String?
+  ownerId        String?
+  name           String
+  code           String?
+  description    String?
+  type           SyllabusNodeType @default(TOPIC)
+  relativeWeight Float            @default(1.0)
+  isActive       Boolean          @default(true)
+  depth          Int              @default(0)
+  sequence       Int              @default(0)
+  metadata       Json?
+  createdAt      DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @db.Timestamptz(6)
+
+  parent   SyllabusNode?  @relation("SyllabusNodeToChildren", fields: [parentId], references: [id])
+  children SyllabusNode[] @relation("SyllabusNodeToChildren")
+  owner    User?          @relation(fields: [ownerId], references: [id])
+
+  masteryHistories     MasteryHistory[]          @relation("SyllabusNodeMasteryHistories")
+  weakAreaQueueEntries WeakAreaInjectionQueue[]   @relation("SyllabusNodeWeakAreaQueueEntries")
+  answerVaultEntries   AnswerVaultEntry[]         @relation("SyllabusNodeAnswerVaultEntries")
+  studyBlocks          StudyBlock[]               @relation("SyllabusNodeStudyBlocks")
+  mockTests            MockTest[]                 @relation("MockTestSyllabusNodes")
+
+  @@unique([parentId, name])
+  @@index([ownerId])
 }
 
 model StudyBlock {
-    id             String      @id @default(cuid())
-      userId         String
-        title          String
-          plannedMinutes Int
-            actualMinutes  Int?
-              status         BlockStatus @default(PENDING)
-                date           DateTime
+  id                  String      @id @default(cuid())
+  userId              String
+  syllabusNodeId      String?
+  rotationRuleId      String?
+  title               String
+  description         String?
+  plannedMinutes      Int
+  actualMinutes       Int?
+  status              BlockStatus @default(PENDING)
+  scheduledAt         DateTime    @db.Timestamptz(6)
+  sessionDate         DateTime    @db.Date
+  isWeakAreaInjection Boolean     @default(false)
+  createdAt           DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime    @updatedAt @db.Timestamptz(6)
 
-                  user User @relation(fields: [userId], references: [id])
+  user         User                @relation(fields: [userId], references: [id])
+  syllabusNode SyllabusNode?       @relation("SyllabusNodeStudyBlocks", fields: [syllabusNodeId], references: [id])
+  rotationRule WeeklyRotationRule? @relation("WeeklyRotationRuleStudyBlocks", fields: [rotationRuleId], references: [id])
 
-                    createdAt DateTime @default(now())
+  @@index([userId, scheduledAt])
+  @@index([syllabusNodeId])
+}
+
+model WeeklyRotationRule {
+  id                    String        @id @default(cuid())
+  userId                String
+  name                  String
+  description           String?
+  cycle                 RotationCycle @default(WEEKLY)
+  startWeekday          Int           @default(1)
+  rotationWindowDays    Int           @default(7)
+  primaryFocusNodeIds   String[]      @default([])
+  secondaryFocusNodeIds String[]      @default([])
+  excludedNodeIds       String[]      @default([])
+  weekdays              Int[]         @default([1, 2, 3, 4, 5])
+  rotationConfig        Json?
+  lastRunAt             DateTime?     @db.Timestamptz(6)
+  nextRunAt             DateTime?     @db.Timestamptz(6)
+  isEnabled             Boolean       @default(true)
+  createdAt             DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime      @updatedAt @db.Timestamptz(6)
+
+  user        User         @relation(fields: [userId], references: [id])
+  studyBlocks StudyBlock[] @relation("WeeklyRotationRuleStudyBlocks")
+
+  @@index([userId])
 }
 
 model MockTest {
-    id            String   @id @default(cuid())
-      userId        String
-        title         String
-          obtainedMarks Float?
-            totalMarks    Float?
-              createdAt     DateTime @default(now())
+  id               String      @id @default(cuid())
+  userId           String
+  title            String
+  description      String?
+  totalMarks       Float?
+  obtainedMarks    Float?
+  scorePercent     Float?
+  outcome          MockOutcome @default(PENDING)
+  takenAt          DateTime?   @db.Timestamptz(6)
+  analysis         Json?
+  topicPerformance Json?
+  weakAreaSummary  Json?
+  createdAt        DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime    @updatedAt @db.Timestamptz(6)
 
-                user User @relation(fields: [userId], references: [id])
+  user                 User                     @relation(fields: [userId], references: [id])
+  weakAreaQueueEntries WeakAreaInjectionQueue[]
+  syllabusNodes         SyllabusNode[]           @relation("MockTestSyllabusNodes")
+
+  @@index([userId, takenAt])
 }
 
+model ErrorLog {
+  id         String      @id @default(cuid())
+  userId     String?
+  severity   LogSeverity @default(ERROR)
+  category   String?
+  message    String
+  details    Json?
+  source     String?
+  occurredAt DateTime    @default(now()) @db.Timestamptz(6)
+  resolved   Boolean     @default(false)
+  resolvedAt DateTime?   @db.Timestamptz(6)
+  createdAt  DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime    @updatedAt @db.Timestamptz(6)
 
+  user User? @relation(fields: [userId], references: [id])
 
+  @@index([userId])
+  @@index([severity])
+}
 
+model WeakAreaInjectionQueue {
+  id                String    @id @default(cuid())
+  userId            String
+  syllabusNodeId    String
+  sourceMockTestId  String?
+  priority          Int       @default(0)
+  reason            String?
+  nextInjectionDate DateTime? @db.Timestamptz(6)
+  lastInjectedAt    DateTime? @db.Timestamptz(6)
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(6)
 
+  user           User         @relation(fields: [userId], references: [id])
+  syllabusNode   SyllabusNode @relation("SyllabusNodeWeakAreaQueueEntries", fields: [syllabusNodeId], references: [id])
+  sourceMockTest MockTest?    @relation(fields: [sourceMockTestId], references: [id])
 
+  @@index([userId, syllabusNodeId])
+  @@index([nextInjectionDate])
+}
+
+model AnswerVaultEntry {
+  id             String            @id @default(cuid())
+  userId         String
+  syllabusNodeId String?
+  questionText   String
+  answerText     String
+  explanation    String?
+  source         String?
+  status         AnswerVaultStatus @default(NEW)
+  difficulty     Int?
+  tags           String[]          @default([])
+  lastReviewedAt DateTime?         @db.Timestamptz(6)
+  nextReviewAt   DateTime?         @db.Timestamptz(6)
+  createdAt      DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime          @updatedAt @db.Timestamptz(6)
+
+  user         User          @relation(fields: [userId], references: [id])
+  syllabusNode SyllabusNode? @relation("SyllabusNodeAnswerVaultEntries", fields: [syllabusNodeId], references: [id])
+
+  @@index([userId, status])
+  @@index([syllabusNodeId])
+}
+
+model FatigueMetric {
+  id            String       @id @default(cuid())
+  userId        String
+  measuredAt    DateTime     @default(now()) @db.Timestamptz(6)
+  fatigueLevel  FatigueLevel @default(MODERATE)
+  cognitiveLoad Int?
+  restHours     Float?
+  stressLevel   Int?
+  notes         String?
+  createdAt     DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime     @updatedAt @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, measuredAt])
+}
+
+model MasteryHistory {
+  id             String       @id @default(cuid())
+  userId         String
+  syllabusNodeId String
+  masteryScore   Float
+  trend          MasteryTrend @default(UNKNOWN)
+  source         String?
+  recordedAt     DateTime     @default(now()) @db.Timestamptz(6)
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
+
+  user         User         @relation(fields: [userId], references: [id])
+  syllabusNode SyllabusNode @relation("SyllabusNodeMasteryHistories", fields: [syllabusNodeId], references: [id])
+
+  @@index([userId, syllabusNodeId])
+  @@index([syllabusNodeId, recordedAt])
+}
