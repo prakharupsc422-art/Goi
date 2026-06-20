@@ -1,0 +1,56 @@
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider = "postgresql"
+  
+}
+
+enum BlockStatus {
+    PENDING
+      IN_PROGRESS
+        DONE
+          SKIPPED
+}
+
+model User {
+    id        String   @id @default(cuid())
+      email     String   @unique
+        name      String?
+          createdAt DateTime @default(now())
+
+            studyBlocks StudyBlock[]
+              mockTests   MockTest[]
+}
+
+model StudyBlock {
+    id             String      @id @default(cuid())
+      userId         String
+        title          String
+          plannedMinutes Int
+            actualMinutes  Int?
+              status         BlockStatus @default(PENDING)
+                date           DateTime
+
+                  user User @relation(fields: [userId], references: [id])
+
+                    createdAt DateTime @default(now())
+}
+
+model MockTest {
+    id            String   @id @default(cuid())
+      userId        String
+        title         String
+          obtainedMarks Float?
+            totalMarks    Float?
+              createdAt     DateTime @default(now())
+
+                user User @relation(fields: [userId], references: [id])
+}
+
+
+
+
+
+
